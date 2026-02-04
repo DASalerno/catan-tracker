@@ -5,6 +5,8 @@ This module provides classes and functions for analyzing Settlers of Catan
 settlement placements based on expected resource production.
 """
 
+import math
+
 # Dice roll probabilities for 2d6
 ROLL_PROBABILITIES = {
     2: 1/36,   # 2.78%
@@ -150,6 +152,95 @@ class Settlement:
                 total += prob * self.multiplier
 
         return total
+
+    def expected_resources_weighted_by_diversity(self):
+        """
+        Calculate expected resources weighted by resource diversity.
+
+        This metric scales expected resources by the square root of unique
+        resource types, rewarding diversity while avoiding over-penalization
+        of specialized settlements. Square root scaling provides diminishing
+        returns - the third unique resource adds less value than the second.
+
+        Desert hexes are excluded from the diversity count since they
+        don't produce resources.
+
+        Returns:
+            float: Expected resources scaled by sqrt(diversity count)
+
+        Example:
+            >>> # Settlement with 3 different resources
+            >>> hexes = [
+            ...     HexTile('wood', 6),
+            ...     HexTile('brick', 8),
+            ...     HexTile('wheat', 9)
+            ... ]
+            >>> settlement = Settlement(hexes)
+            >>> settlement.expected_resources_weighted_by_diversity()
+            0.6728
+
+            >>> # Settlement with 1 resource type
+            >>> hexes = [
+            ...     HexTile('wood', 6),
+            ...     HexTile('wood', 8)
+            ... ]
+            >>> settlement = Settlement(hexes)
+            >>> settlement.expected_resources_weighted_by_diversity()
+            0.2778
+        """
+        # Get base expected resources per roll
+        base_expected = self.expected_resources_per_roll()
+
+        # Count unique resource types (excluding desert) using set comprehension
+        resource_types = {
+            hex_tile.resource
+            for hex_tile in self.hexes
+            if hex_tile.resource != 'desert'
+        }
+
+        # Apply square root scaling for balanced weighting
+        diversity_factor = math.sqrt(len(resource_types))
+
+        return base_expected * diversity_factor
+
+    def probability_of_resources_on_roll(self):
+        """
+        Calculate probability of getting at least one resource on any given roll.
+
+        This metric sums the probabilities of rolling any number that produces
+        resources for this settlement. It does NOT double-count - if multiple
+        hexes have the same number, we still only count that number once.
+
+        Returns:
+            float: Probability of getting resources (0.0 to 1.0)
+
+        Example:
+            >>> # Settlement covering three different numbers
+            >>> hexes = [HexTile('wood', 6), HexTile('brick', 8), HexTile('wheat', 9)]
+            >>> settlement = Settlement(hexes)
+            >>> settlement.probability_of_resources_on_roll()
+            0.3889  # P(6) + P(8) + P(9) = 5/36 + 5/36 + 4/36
+
+            >>> # Settlement with duplicate numbers
+            >>> hexes = [HexTile('wood', 6), HexTile('sheep', 6)]
+            >>> settlement = Settlement(hexes)
+            >>> settlement.probability_of_resources_on_roll()
+            0.1389  # P(6) = 5/36 (not double-counted!)
+        """
+        # Collect unique dice numbers (excluding desert)
+        unique_numbers = {
+            hex_tile.number
+            for hex_tile in self.hexes
+            if hex_tile.number > 0
+        }
+
+        # Sum probabilities for all unique numbers
+        total_probability = sum(
+            ROLL_PROBABILITIES.get(number, 0)
+            for number in unique_numbers
+        )
+
+        return total_probability
 
 
 # ============================================================================
@@ -330,6 +421,227 @@ if __name__ == '__main__':
     print(f"  Expected: {expected:.4f}")
     print(f"  Should ignore desert: {5/36:.4f}")
     print(f"  Match: {abs(expected - 5/36) < 0.0001}")
+
+    # ========================================================================
+    # Test 7: Diversity Weighting Calculation
+    # ========================================================================
+    print("\n" + "=" * 70)
+    print("TEST 7: Diversity Weighting Calculation (Square Root Scaling)")
+    print("=" * 70)
+
+    # Test case 7.1: Single resource type (all wood)
+    hexes = [
+        HexTile('wood', 6),
+        HexTile('wood', 8),
+        HexTile('wood', 9)
+    ]
+    settlement = Settlement(hexes)
+    base_expected = settlement.expected_resources_per_roll()
+    weighted = settlement.expected_resources_weighted_by_diversity()
+    expected_factor = math.sqrt(1)
+    print(f"\nSingle resource type (all wood):")
+    print(f"  Base expected: {base_expected:.4f}")
+    print(f"  Weighted: {weighted:.4f}")
+    print(f"  Diversity factor: √1 = {expected_factor:.4f}")
+    print(f"  Should be: {base_expected * expected_factor:.4f}")
+    print(f"  Match: {abs(weighted - base_expected * expected_factor) < 0.0001}")
+
+    # Test case 7.2: Two resource types
+    hexes = [
+        HexTile('wood', 6),
+        HexTile('wood', 8),
+        HexTile('brick', 9)
+    ]
+    settlement = Settlement(hexes)
+    base_expected = settlement.expected_resources_per_roll()
+    weighted = settlement.expected_resources_weighted_by_diversity()
+    expected_factor = math.sqrt(2)
+    print(f"\nTwo resource types (wood, brick):")
+    print(f"  Base expected: {base_expected:.4f}")
+    print(f"  Weighted: {weighted:.4f}")
+    print(f"  Diversity factor: √2 = {expected_factor:.4f}")
+    print(f"  Should be: {base_expected * expected_factor:.4f}")
+    print(f"  Match: {abs(weighted - base_expected * expected_factor) < 0.0001}")
+
+    # Test case 7.3: Three resource types
+    hexes = [
+        HexTile('wood', 6),
+        HexTile('brick', 8),
+        HexTile('wheat', 9)
+    ]
+    settlement = Settlement(hexes)
+    base_expected = settlement.expected_resources_per_roll()
+    weighted = settlement.expected_resources_weighted_by_diversity()
+    expected_factor = math.sqrt(3)
+    print(f"\nThree resource types (wood, brick, wheat):")
+    print(f"  Base expected: {base_expected:.4f}")
+    print(f"  Weighted: {weighted:.4f}")
+    print(f"  Diversity factor: √3 = {expected_factor:.4f}")
+    print(f"  Should be: {base_expected * expected_factor:.4f}")
+    print(f"  Match: {abs(weighted - base_expected * expected_factor) < 0.0001}")
+
+    # Test case 7.4: With desert (should be ignored)
+    hexes = [
+        HexTile('wood', 6),
+        HexTile('brick', 8),
+        HexTile('desert', 0)
+    ]
+    settlement = Settlement(hexes)
+    base_expected = settlement.expected_resources_per_roll()
+    weighted = settlement.expected_resources_weighted_by_diversity()
+    expected_factor = math.sqrt(2)
+    print(f"\nWith desert (wood, brick, desert):")
+    print(f"  Base expected: {base_expected:.4f}")
+    print(f"  Weighted: {weighted:.4f}")
+    print(f"  Diversity count: 2 (desert ignored)")
+    print(f"  Diversity factor: √2 = {expected_factor:.4f}")
+    print(f"  Should be: {base_expected * expected_factor:.4f}")
+    print(f"  Match: {abs(weighted - base_expected * expected_factor) < 0.0001}")
+
+    # Test case 7.5: City has same diversity as settlement
+    hexes = [
+        HexTile('wood', 6),
+        HexTile('brick', 8),
+        HexTile('wheat', 9)
+    ]
+    settlement = Settlement(hexes)
+    city = Settlement(hexes, is_city=True)
+
+    settlement_weighted = settlement.expected_resources_weighted_by_diversity()
+    city_weighted = city.expected_resources_weighted_by_diversity()
+
+    print(f"\nCity vs Settlement (same hexes):")
+    print(f"  Settlement weighted: {settlement_weighted:.4f}")
+    print(f"  City weighted: {city_weighted:.4f}")
+    print(f"  City is double: {abs(city_weighted - settlement_weighted * 2) < 0.0001}")
+
+    # Test case 7.6: Strategic comparison
+    print(f"\nStrategic comparison (same base expected value):")
+    specialized = Settlement([
+        HexTile('wood', 6),
+        HexTile('wood', 8),
+        HexTile('wood', 9)
+    ])
+    diverse = Settlement([
+        HexTile('wood', 6),
+        HexTile('brick', 8),
+        HexTile('wheat', 9)
+    ])
+
+    spec_base = specialized.expected_resources_per_roll()
+    spec_weighted = specialized.expected_resources_weighted_by_diversity()
+    div_base = diverse.expected_resources_per_roll()
+    div_weighted = diverse.expected_resources_weighted_by_diversity()
+
+    print(f"  Specialized (all wood):")
+    print(f"    Base: {spec_base:.4f}, Weighted: {spec_weighted:.4f} (×√1 = ×1.00)")
+    print(f"  Diverse (wood/brick/wheat):")
+    print(f"    Base: {div_base:.4f}, Weighted: {div_weighted:.4f} (×√3 = ×{math.sqrt(3):.2f})")
+    print(f"  Diverse is better by: {((div_weighted/spec_weighted - 1) * 100):.1f}%")
+    print(f"  (Balanced: not the 200% advantage of linear multiplier)")
+
+    # ========================================================================
+    # Test 8: Probability of Resources Calculation
+    # ========================================================================
+    print("\n" + "=" * 70)
+    print("TEST 8: Probability of Resources Calculation")
+    print("=" * 70)
+
+    # Test case 8.1: Single hex
+    hexes = [HexTile('wood', 6)]
+    settlement = Settlement(hexes)
+    probability = settlement.probability_of_resources_on_roll()
+    expected_prob = ROLL_PROBABILITIES[6]
+    print(f"\nSingle hex (wood-6):")
+    print(f"  Probability: {probability:.4f} ({probability * 100:.2f}%)")
+    print(f"  Should be: {expected_prob:.4f} ({expected_prob * 100:.2f}%)")
+    print(f"  Match: {abs(probability - expected_prob) < 0.0001}")
+
+    # Test case 8.2: Multiple hexes, different numbers
+    hexes = [
+        HexTile('wood', 6),
+        HexTile('brick', 8),
+        HexTile('wheat', 9)
+    ]
+    settlement = Settlement(hexes)
+    probability = settlement.probability_of_resources_on_roll()
+    expected_prob = ROLL_PROBABILITIES[6] + ROLL_PROBABILITIES[8] + ROLL_PROBABILITIES[9]
+    print(f"\nMultiple hexes, different numbers (6, 8, 9):")
+    print(f"  Probability: {probability:.4f} ({probability * 100:.2f}%)")
+    print(f"  Should be: {expected_prob:.4f} ({expected_prob * 100:.2f}%)")
+    print(f"  Formula: P(6) + P(8) + P(9) = 5/36 + 5/36 + 4/36")
+    print(f"  Match: {abs(probability - expected_prob) < 0.0001}")
+
+    # Test case 8.3: Duplicate numbers (critical test!)
+    hexes = [
+        HexTile('wood', 6),
+        HexTile('sheep', 6),
+        HexTile('brick', 8)
+    ]
+    settlement = Settlement(hexes)
+    probability = settlement.probability_of_resources_on_roll()
+    expected_prob = ROLL_PROBABILITIES[6] + ROLL_PROBABILITIES[8]
+    print(f"\nDuplicate numbers (wood-6, sheep-6, brick-8):")
+    print(f"  Probability: {probability:.4f} ({probability * 100:.2f}%)")
+    print(f"  Should be: {expected_prob:.4f} ({expected_prob * 100:.2f}%)")
+    print(f"  Should NOT double-count the 6: P(6) + P(8), not P(6) + P(6) + P(8)")
+    print(f"  Match: {abs(probability - expected_prob) < 0.0001}")
+
+    # Test case 8.4: With desert (should be ignored)
+    hexes = [
+        HexTile('wood', 6),
+        HexTile('desert', 0),
+        HexTile('brick', 8)
+    ]
+    settlement = Settlement(hexes)
+    probability = settlement.probability_of_resources_on_roll()
+    expected_prob = ROLL_PROBABILITIES[6] + ROLL_PROBABILITIES[8]
+    print(f"\nWith desert (wood-6, desert-0, brick-8):")
+    print(f"  Probability: {probability:.4f} ({probability * 100:.2f}%)")
+    print(f"  Should be: {expected_prob:.4f} ({expected_prob * 100:.2f}%)")
+    print(f"  Desert (0) ignored: P(6) + P(8)")
+    print(f"  Match: {abs(probability - expected_prob) < 0.0001}")
+
+    # Test case 8.5: City vs settlement (same probability)
+    hexes = [
+        HexTile('wood', 6),
+        HexTile('brick', 8),
+        HexTile('wheat', 9)
+    ]
+    settlement = Settlement(hexes)
+    city = Settlement(hexes, is_city=True)
+
+    settlement_prob = settlement.probability_of_resources_on_roll()
+    city_prob = city.probability_of_resources_on_roll()
+
+    print(f"\nCity vs Settlement (same hexes):")
+    print(f"  Settlement probability: {settlement_prob:.4f} ({settlement_prob * 100:.2f}%)")
+    print(f"  City probability: {city_prob:.4f} ({city_prob * 100:.2f}%)")
+    print(f"  Same probability: {abs(settlement_prob - city_prob) < 0.0001}")
+    print(f"  (City gets 2x resources when rolling these numbers, but same chance)")
+
+    # Test case 8.6: Best and worst case scenarios
+    best_hexes = [
+        HexTile('wood', 6),
+        HexTile('brick', 8),
+        HexTile('wheat', 5)
+    ]
+    worst_hexes = [
+        HexTile('ore', 2),
+        HexTile('wheat', 12),
+        HexTile('desert', 0)
+    ]
+
+    best = Settlement(best_hexes)
+    worst = Settlement(worst_hexes)
+
+    best_prob = best.probability_of_resources_on_roll()
+    worst_prob = worst.probability_of_resources_on_roll()
+
+    print(f"\nBest vs Worst case:")
+    print(f"  Best (6, 8, 5): {best_prob:.4f} ({best_prob * 100:.2f}%)")
+    print(f"  Worst (2, 12, desert): {worst_prob:.4f} ({worst_prob * 100:.2f}%)")
+    print(f"  Best is {(best_prob / worst_prob):.1f}x more likely to get resources")
 
     # ========================================================================
     # Summary
